@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jarvis"
 version = "0.1.0"
-description = "A local 100% offline agentic assistant"
+description = "A local 100% offline virtual assistant"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

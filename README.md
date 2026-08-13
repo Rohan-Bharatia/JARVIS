@@ -1,6 +1,6 @@
 # JARVIS
 
-A local 100% offline agentic assistant.
+A local 100% offline virtual assistant.
 
 ## Requirements
 
