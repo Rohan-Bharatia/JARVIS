@@ -53,6 +53,9 @@ def write_config(tmp_path: Path, content: str) -> Path:
     return path
 
 
+FULL_CFG = '[llm]\nmodel = "qwen2.5:7b"\n[mcp.servers.shell]\ncommand = "true"\n'
+
+
 def patch_runtime(monkeypatch: pytest.MonkeyPatch, installed: list[str] | None = None) -> None:
     def factory(endpoint: str, model: str, **kwargs: object) -> FakeRuntime:
         runtime = FakeRuntime(endpoint, model, **kwargs)
@@ -64,12 +67,12 @@ def patch_runtime(monkeypatch: pytest.MonkeyPatch, installed: list[str] | None =
 
 
 def test_doctor_all_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    cfg = write_config(tmp_path, FULL_CFG)
     load_or_create_keypair(tmp_path)
     patch_runtime(monkeypatch)
     results = run_checks(cfg, tmp_path)
     assert all(result.ok for result in results)
-    assert [result.name for result in results] == ["platform", "config", "llm", "models", "keys"]
+    assert [result.name for result in results] == ["platform", "config", "llm", "models", "tools", "keys"]
 
 
 def test_doctor_flags_bad_config(tmp_path: Path) -> None:
@@ -83,7 +86,7 @@ def test_doctor_flags_bad_config(tmp_path: Path) -> None:
 
 
 def test_doctor_flags_unreachable_llm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    cfg = write_config(tmp_path, FULL_CFG)
     load_or_create_keypair(tmp_path)
 
     def factory(endpoint: str, model: str, **kwargs: object) -> FakeRuntime:
@@ -100,7 +103,7 @@ def test_doctor_flags_unreachable_llm(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_doctor_flags_model_not_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    cfg = write_config(tmp_path, FULL_CFG)
     load_or_create_keypair(tmp_path)
     patch_runtime(monkeypatch, installed=["other"])
     results = run_checks(cfg, tmp_path)
@@ -110,9 +113,29 @@ def test_doctor_flags_model_not_installed(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_doctor_flags_missing_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    cfg = write_config(tmp_path, FULL_CFG)
     patch_runtime(monkeypatch)
     results = run_checks(cfg, tmp_path)
     keys_result = next(result for result in results if result.name == "keys")
     assert not keys_result.ok
     assert all(result.ok for result in results if result.name != "keys")
+
+
+def test_doctor_flags_missing_mcp_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n[mcp.servers.shell]\ncommand = "/nonexistent/bin"\n')
+    load_or_create_keypair(tmp_path)
+    patch_runtime(monkeypatch)
+    results = run_checks(cfg, tmp_path)
+    tools_result = next(result for result in results if result.name == "tools")
+    assert not tools_result.ok
+    assert "not found" in tools_result.detail
+
+
+def test_doctor_flags_unconfigured_tool_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    load_or_create_keypair(tmp_path)
+    patch_runtime(monkeypatch)
+    results = run_checks(cfg, tmp_path)
+    tools_result = next(result for result in results if result.name == "tools")
+    assert not tools_result.ok
+    assert "shell" in tools_result.detail

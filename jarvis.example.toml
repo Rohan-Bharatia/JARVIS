@@ -12,6 +12,16 @@ plan_review = true
 loop_cap = 20
 default_timeout = 60
 
+# Tool policy. Empty `allow` means every registered tool is permitted unless
+# denied; approval is still required for tools marked requires_approval or
+# side_effects while plan_review is on.
+[tools]
+allow = []
+deny = []
+# Optional extra directory of declarative *.tool.md tool definitions that are
+# merged over the bundled defaults.
+tools_dir = "~/.config/jarvis/tools"
+
 # MCP servers must use the stdio transport and local commands only (offline).
 [mcp.servers.files]
 command = "jarvis-mcp-files"

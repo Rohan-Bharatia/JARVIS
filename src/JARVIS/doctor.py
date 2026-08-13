@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from JARVIS.config import ConfigError, Settings, load_settings, validate_setting
 from JARVIS.llm.ollama import OllamaError, OllamaRuntime
 from JARVIS.models.manifest import ManifestError, load_manifest, verify_entry
 from JARVIS.security.keys import check_keypair
+from JARVIS.tools.descriptor import DEFAULT_TOOLS_DIR, ToolDescriptorError, load_tool_descriptors
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +57,7 @@ def run_checks(config_path: Path, cfg_dir: Path, *, deep: bool = False) -> list[
             results.append(CheckResult("config", True, f"valid: {config_path}"))
             results.append(_llm_check(settings))
             results.append(_models_check(settings, deep=deep))
+            results.append(_tools_check(settings))
     results.append(_keys_check(cfg_dir))
     return results
 
@@ -108,3 +111,31 @@ def _keys_check(cfg_dir: Path) -> CheckResult:
     if problems:
         return CheckResult("keys", False, "; ".join(problems))
     return CheckResult("keys", True, f"keypair ok: {cfg_dir}")
+
+
+def _tools_check(settings: Settings) -> CheckResult:
+    dirs = [DEFAULT_TOOLS_DIR]
+    if settings.tools.tools_dir:
+        dirs.append(Path(settings.tools.tools_dir).expanduser())
+    try:
+        descriptors = load_tool_descriptors(*dirs)
+    except (ToolDescriptorError, OSError) as exc:
+        return CheckResult("tools", False, str(exc))
+
+    problems: list[str] = []
+    for name, descriptor in descriptors.items():
+        if descriptor.server not in settings.mcp_servers:
+            problems.append(f"tool {name!r}: MCP server {descriptor.server!r} not configured")
+    for name, server in settings.mcp_servers.items():
+        if not _command_exists(server.command):
+            problems.append(f"MCP server {name!r}: command {server.command!r} not found")
+
+    if problems:
+        return CheckResult("tools", False, "; ".join(problems))
+    return CheckResult("tools", True, f"{len(descriptors)} tools loaded")
+
+
+def _command_exists(command: str) -> bool:
+    if "/" in command:
+        return Path(command).expanduser().is_file()
+    return shutil.which(command) is not None

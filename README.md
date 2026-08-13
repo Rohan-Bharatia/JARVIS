@@ -21,6 +21,11 @@ jarvis run --prompt "hi" # stream a response to a single prompt (prompt also rea
 - `doctor` exits 0 only when every check passes; failures exit 1.
 - Model integrity is defined in the packaged `models/manifest.yaml`; `--deep` verifies
   SHA256 hashes of local model files when a manifest entry provides them.
+- `run` streams the agent loop: the model may call registered tools (declarative
+  `*.tool.md` definitions in `src/JARVIS/tools/definitions/` plus your `tools_dir`).
+  Every tool call is Ed25519-signed and approved interactively when it has side
+  effects or is marked `requires_approval`. A keypair is required — create it with
+  `jarvis keys`. MCP servers use the stdio transport only.
 
 ## Setup
 

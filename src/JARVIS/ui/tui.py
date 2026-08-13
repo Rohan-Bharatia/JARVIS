@@ -26,7 +26,18 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.text import Text
 
-from JARVIS.events import Event, FinalAnswer, LLMThinking, PromptReceived, SessionError
+from JARVIS.events import (
+    Event,
+    FinalAnswer,
+    LLMThinking,
+    PromptReceived,
+    SessionError,
+    ToolCallDenied,
+    ToolCallOutput,
+    ToolCallPlanned,
+    ToolCallStarted,
+    ToolResult,
+)
 
 
 class Transcript:
@@ -46,6 +57,21 @@ class Transcript:
         elif isinstance(event, SessionError):
             self._finalize_stream()
             self._entries.append(f"error: {event.message}")
+        elif isinstance(event, ToolCallPlanned):
+            self._finalize_stream()
+            self._entries.append(f"plan: {event.tool}({event.args!r})")
+        elif isinstance(event, ToolCallStarted):
+            self._finalize_stream()
+            self._entries.append(f"running: {event.tool}")
+        elif isinstance(event, ToolCallOutput):
+            self._entries.append(f"[{event.tool}] {event.text}")
+        elif isinstance(event, ToolResult):
+            self._finalize_stream()
+            status = "ok" if event.ok else "FAIL"
+            self._entries.append(f"{status}: {event.tool}: {event.summary}")
+        elif isinstance(event, ToolCallDenied):
+            self._finalize_stream()
+            self._entries.append(f"denied: {event.tool}: {event.reason}")
 
     def entries(self) -> list[str]:
         return list(self._entries)

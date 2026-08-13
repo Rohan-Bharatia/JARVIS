@@ -36,7 +36,7 @@ package-dir = { "" = "src" }
 where = [ "src" ]
 
 [tool.setuptools.package-data]
-JARVIS = [ "py.typed", "models/*.yaml" ]
+JARVIS = [ "py.typed", "models/*.yaml", "tools/definitions/*.tool.md" ]
 
 [tool.ruff]
 line-length = 120

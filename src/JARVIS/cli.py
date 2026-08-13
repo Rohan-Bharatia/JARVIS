@@ -23,16 +23,20 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from JARVIS.agent.loop import run_agent
 from JARVIS.config import ConfigError, config_dir, default_config_path, load_settings, validate_settings
 from JARVIS.doctor import run_checks
-from JARVIS.events import EventEmitter, FinalAnswer, LLMThinking, PromptReceived
-from JARVIS.llm.base import ChatMessage
+from JARVIS.events import EventEmitter
 from JARVIS.llm.ollama import OllamaError, OllamaRuntime
 from JARVIS.security.keys import check_keypair, load_or_create_keypair, private_key_path
+from JARVIS.tools.descriptor import DEFAULT_TOOLS_DIR, load_tool_descriptors
+from JARVIS.tools.runner import ToolRunner
 from JARVIS.ui.tui import ProcessViewer
 
 
@@ -61,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--prompt", default=None, help="the user prompt (default: read from stdin)")
     run_cmd.add_argument("--model", default=None, help="override llm.model from the config")
     run_cmd.add_argument("--config", type=Path, default=None, help="path to jarvis.toml")
+    run_cmd.add_argument("--config-dir", type=Path, default=None, help="path to the JARVIS config directory")
 
     return parser
 
@@ -126,6 +131,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print("no prompt provided (use --prompt or pipe text via stdin)")
         return 2
 
+    cfg_dir = args.config_dir if args.config_dir is not None else config_dir()
+    if check_keypair(cfg_dir):
+        print(f"keypair missing or invalid at {cfg_dir}; run `jarvis keys` first")
+        return 1
+    keypair = load_or_create_keypair(cfg_dir)
+
     runtime = OllamaRuntime(
         settings.llm.endpoint,
         model,
@@ -139,22 +150,69 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     emitter = EventEmitter()
     viewer: ProcessViewer | None = None
+    runner: ToolRunner | None = None
     try:
         viewer = ProcessViewer()
         emitter.subscribe(viewer.handle)
         viewer.start()
-        emitter.emit(PromptReceived(prompt=prompt))
-        messages = [ChatMessage(role="user", content=prompt)]
-        parts: list[str] = []
-        for token in runtime.stream_chat(messages):
-            parts.append(token)
-            emitter.emit(LLMThinking(text=token))
-        emitter.emit(FinalAnswer(text="".join(parts)))
-        return 0
+
+        dirs = [DEFAULT_TOOLS_DIR]
+        if settings.tools.tools_dir:
+            dirs.append(Path(settings.tools.tools_dir).expanduser())
+        descriptors = load_tool_descriptors(*dirs)
+        runner = ToolRunner(
+            settings,
+            descriptors,
+            keypair=keypair,
+            emitter=emitter,
+            approver=_make_approver(viewer),
+            sudo_provider=_make_sudo_provider(viewer),
+        )
+        runner.connect()
+
+        rc = run_agent(
+            settings=settings,
+            runtime=runtime,
+            runner=runner,
+            emitter=emitter,
+            prompt=prompt,
+            keypair=keypair,
+        )
+        return rc
     except OllamaError as exc:
         print(f"error: {exc}")
         return 1
     finally:
+        if runner is not None:
+            runner.close()
         if viewer is not None:
             viewer.stop()
         runtime.close()
+
+
+def _make_approver(viewer: ProcessViewer) -> Callable[[str, dict[str, object]], bool]:
+    def approve(tool: str, args: dict[str, object]) -> bool:
+        if not sys.stdin.isatty():
+            return False
+        viewer.stop()
+        try:
+            answer = input(f"approve {tool} {json.dumps(args)}? [y/N] ")
+        finally:
+            viewer.start()
+        return answer.strip().lower() in ("y", "yes")
+
+    return approve
+
+
+def _make_sudo_provider(viewer: ProcessViewer) -> Callable[[str], str | None]:
+    def provide(tool: str) -> str | None:
+        if not sys.stdin.isatty():
+            return None
+        viewer.stop()
+        try:
+            password = getpass.getpass(f"sudo password for {tool}: ")
+        finally:
+            viewer.start()
+        return password or None
+
+    return provide

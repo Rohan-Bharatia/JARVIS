@@ -69,6 +69,13 @@ class AgentSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolSettings:
+    allow: tuple[str, ...] = field(default_factory=tuple)
+    deny: tuple[str, ...] = field(default_factory=tuple)
+    tools_dir: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MCPServer:
     name: str
     command: str
@@ -82,6 +89,7 @@ class MCPServer:
 class Settings:
     llm: LLMSettings
     agent: AgentSettings
+    tools: ToolSettings
     mcp_servers: dict[str, MCPServer]
     config_path: Path
 
@@ -108,6 +116,13 @@ def load_settings(path: Path) -> Settings:
             default_timeout=int(agent_raw.get("default_timeout", 60)),
         )
 
+        tools_raw = raw.get("tools", {})
+        tools = ToolSettings(
+            allow=tuple(str(a) for a in tools_raw.get("allow", [])),
+            deny=tuple(str(d) for d in tools_raw.get("deny", [])),
+            tools_dir=str(tools_raw["tools_dir"]) if "tools_dir" in tools_raw else None,
+        )
+
         servers: dict[str, MCPServer] = {}
         for name, table in raw.get("mcp", {}).get("servers", {}).items():
             args = table.get("args", [])
@@ -123,7 +138,7 @@ def load_settings(path: Path) -> Settings:
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"invalid config {path}: {exc}") from exc
 
-    return Settings(llm=llm, agent=agent, mcp_servers=servers, config_path=path)
+    return Settings(llm=llm, agent=agent, tools=tools, mcp_servers=servers, config_path=path)
 
 
 def validate_settings(settings: Settings) -> list[str]:

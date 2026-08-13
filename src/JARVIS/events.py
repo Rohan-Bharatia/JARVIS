@@ -85,6 +85,24 @@ class ToolCallVerified(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCallStarted(Event):
+    kind: ClassVar[str] = "tool_call_started"
+    tool: str
+    call_id: str
+    args: dict[str, object]
+    created_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallOutput(Event):
+    kind: ClassVar[str] = "tool_call_output"
+    tool: str
+    call_id: str
+    text: str
+    created_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorizationRequested(Event):
     kind: ClassVar[str] = "authorization_requested"
     tool: str

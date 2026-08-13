@@ -26,7 +26,16 @@ from io import StringIO
 
 from rich.console import Console
 
-from JARVIS.events import FinalAnswer, LLMThinking, PromptReceived, SessionError
+from JARVIS.events import (
+    FinalAnswer,
+    LLMThinking,
+    PromptReceived,
+    SessionError,
+    ToolCallDenied,
+    ToolCallPlanned,
+    ToolCallStarted,
+    ToolResult,
+)
 from JARVIS.ui.tui import ProcessViewer, Transcript
 
 
@@ -53,6 +62,19 @@ def test_transcript_error() -> None:
     transcript = Transcript()
     transcript.apply(SessionError(message="boom"))
     assert transcript.entries() == ["error: boom"]
+
+
+def test_transcript_tool_events() -> None:
+    transcript = Transcript()
+    transcript.apply(ToolCallPlanned(tool="shell.run", call_id="c1", args={"command": "ls"}))
+    transcript.apply(ToolCallStarted(tool="shell.run", call_id="c1", args={}))
+    transcript.apply(ToolResult(tool="shell.run", call_id="c1", ok=True, summary="ok out"))
+    transcript.apply(ToolCallDenied(tool="shell.run", call_id="c2", reason="user denied"))
+    entries = transcript.entries()
+    assert entries[0] == "plan: shell.run({'command': 'ls'})"
+    assert entries[1] == "running: shell.run"
+    assert entries[2] == "ok: shell.run: ok out"
+    assert entries[3] == "denied: shell.run: user denied"
 
 
 def test_process_viewer_renders() -> None:
