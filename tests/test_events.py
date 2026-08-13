@@ -22,10 +22,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
-from JARVIS.cli import run
+from JARVIS.events import Event, EventEmitter, FinalAnswer, PromptReceived
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    return run(argv)
+def test_emitter_delivers_events_in_order() -> None:
+    received: list[Event] = []
+    emitter = EventEmitter()
+    emitter.subscribe(received.append)
+    emitter.emit(PromptReceived(prompt="hello"))
+    emitter.emit(FinalAnswer(text="hi"))
+    assert [type(event).__name__ for event in received] == ["PromptReceived", "FinalAnswer"]
+
+
+def test_events_carry_kind() -> None:
+    assert PromptReceived(prompt="x").kind == "prompt_received"
+    assert FinalAnswer(text="y").kind == "final_answer"
+
+
+def test_unsubscribe_stops_delivery() -> None:
+    received: list[Event] = []
+    emitter = EventEmitter()
+    unsubscribe = emitter.subscribe(received.append)
+    emitter.emit(FinalAnswer(text="a"))
+    unsubscribe()
+    emitter.emit(FinalAnswer(text="b"))
+    assert len(received) == 1

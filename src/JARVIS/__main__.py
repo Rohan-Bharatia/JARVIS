@@ -20,12 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from __future__ import annotations
-
-from collections.abc import Sequence
-
 from JARVIS.cli import run
 
-
-def main(argv: Sequence[str] | None = None) -> int:
-    return run(argv)
+if __name__ == "__main__":
+    raise SystemExit(run())

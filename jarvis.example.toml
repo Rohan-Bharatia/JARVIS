@@ -1,0 +1,22 @@
+# JARVIS example configuration.
+# Copy to ~/.config/jarvis/jarvis.toml and adjust.
+
+[llm]
+model = "qwen2.5:7b"
+endpoint = "http://127.0.0.1:11434"
+num_ctx = 8192
+temperature = 0.0
+
+[agent]
+plan_review = true
+loop_cap = 20
+default_timeout = 60
+
+# MCP servers must use the stdio transport and local commands only (offline).
+[mcp.servers.files]
+command = "jarvis-mcp-files"
+
+[mcp.servers.shell]
+command = "/nix/store/00000000000000000000000000000000-mcp-shell/bin/mcp-shell"
+args = ["--workspace", "~/JARVIS-workspace"]
+env = ["HOME", "USER"]
