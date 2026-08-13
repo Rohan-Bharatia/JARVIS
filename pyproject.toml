@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "A local 100% offline agentic assistant"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = [ "LICENSE" ]
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.12",
+    "mypy>=1.17",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = [ "src" ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [ "JARVIS" ]
+
+[tool.pytest.ini_options]
+testpaths = [ "tests" ]
+
+[tool.coverage.run]
+source = [ "JARVIS" ]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = [ "src", "tests" ]
