@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -74,13 +75,21 @@ def run_agent(
     emitter: EventEmitter,
     prompt: str,
     keypair: Ed25519PrivateKey,
+    history: Sequence[ChatMessage] = (),
     base_prompt: str = BASE_SYSTEM_PROMPT,
-) -> int:
+) -> tuple[int, list[ChatMessage]]:
     emitter.emit(PromptReceived(prompt=prompt))
     tool_specs = [describe_for_model(descriptor) for descriptor in runner.available_tools()]
     tool_names = {descriptor.name for descriptor in runner.available_tools()}
     system = _signed_system_prompt(keypair, build_system_prompt(base_prompt, tool_specs))
-    messages = [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)]
+    messages = [
+        ChatMessage(role="system", content=system),
+        *history,
+        ChatMessage(role="user", content=prompt),
+    ]
+
+    def turns() -> list[ChatMessage]:
+        return [message for message in messages if message.role != "system"]
 
     for _ in range(settings.agent.loop_cap):
         parts: list[str] = []
@@ -91,8 +100,9 @@ def run_agent(
 
         frame = extract_tool_call(text)
         if frame is None:
+            messages.append(ChatMessage(role="assistant", content=text))
             emitter.emit(FinalAnswer(text=text))
-            return 0
+            return 0, turns()
 
         if frame.tool not in tool_names:
             emitter.emit(ToolCallDenied(tool=frame.tool, call_id="", reason=f"unknown tool {frame.tool!r}"))
@@ -120,4 +130,4 @@ def run_agent(
             messages.append(ChatMessage(role="user", content=f"Tool {frame.tool} failed: {outcome.summary}"))
 
     emitter.emit(SessionError(message=f"loop cap {settings.agent.loop_cap} reached without a final answer"))
-    return 1
+    return 1, turns()

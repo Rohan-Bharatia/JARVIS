@@ -16,6 +16,9 @@ jarvis doctor            # run system diagnostics (config, LLM, model manifest, 
 jarvis doctor --deep     # also verify model file hashes (slow)
 jarvis keys              # create or repair the Ed25519 keypair
 jarvis run --prompt "hi" # stream a response to a single prompt (prompt also read from stdin)
+jarvis session list      # list encrypted session history
+jarvis session show <id> # decrypt and print a session
+jarvis session delete <id>
 ```
 
 - `doctor` exits 0 only when every check passes; failures exit 1.
@@ -26,6 +29,10 @@ jarvis run --prompt "hi" # stream a response to a single prompt (prompt also rea
   Every tool call is Ed25519-signed and approved interactively when it has side
   effects or is marked `requires_approval`. A keypair is required — create it with
   `jarvis keys`. MCP servers use the stdio transport only.
+- Sessions: `run` saves every conversation to `$XDG_DATA_HOME/jarvis/sessions/`
+  as AES-256-GCM-encrypted files. The key is derived (HKDF-SHA256) from your
+  Ed25519 keypair, so only your machine + keypair can read history; `jarvis keys --reset`
+  makes old sessions unreadable. Resume a conversation with `run --session <id>`.
 
 ## Setup
 

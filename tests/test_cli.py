@@ -42,6 +42,7 @@ class FakeRuntime:
         self.model = model
         self.ping_ok = True
         self._responses: list[str] | None = None
+        self.calls: list[list[ChatMessage]] = []
 
     def ping(self) -> bool:
         return self.ping_ok
@@ -53,6 +54,7 @@ class FakeRuntime:
         pass
 
     def stream_chat(self, messages: Sequence[ChatMessage]) -> Iterator[str]:
+        self.calls.append(list(messages))
         assert messages[-1].role == "user"
         if self._responses is not None:
             response = self._responses.pop(0)
@@ -102,11 +104,18 @@ def tool_call_json(tool: str) -> str:
     return f"```json\n{json.dumps({'action': 'call', 'tool': tool, 'args': {}})}\n```"
 
 
+def isolate_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    data = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    return data
+
+
 def test_run_streams_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
     load_or_create_keypair(tmp_path)
+    isolate_data(monkeypatch, tmp_path)
     monkeypatch.setattr(cli_module, "OllamaRuntime", FakeRuntime)
     rc = cli_module.run(["run", "--config", str(cfg), "--config-dir", str(tmp_path), "--prompt", "hello"])
     assert rc == 0
@@ -118,6 +127,7 @@ def test_run_streams_response(
 def test_run_with_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
     load_or_create_keypair(tmp_path)
+    isolate_data(monkeypatch, tmp_path)
     runtime = FakeRuntime(str(tmp_path), "qwen2.5:7b")
     runtime._responses = [tool_call_json("shell.read"), "read the file"]
     monkeypatch.setattr(cli_module, "OllamaRuntime", lambda endpoint, model, **kw: runtime)
@@ -168,3 +178,71 @@ def test_run_no_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: 
     rc = cli_module.run(["run", "--config", str(cfg), "--config-dir", str(tmp_path)])
     assert rc == 2
     assert "no prompt" in capsys.readouterr().out
+
+
+def test_run_saves_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    load_or_create_keypair(tmp_path)
+    isolate_data(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "OllamaRuntime", FakeRuntime)
+    assert cli_module.run(["run", "--config", str(cfg), "--config-dir", str(tmp_path), "--prompt", "hello"]) == 0
+    capsys.readouterr()
+    rc = cli_module.run(["session", "list", "--config-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "hello" in out
+    session_id = out.split()[0]
+    rc = cli_module.run(["session", "show", session_id, "--config-dir", str(tmp_path)])
+    assert rc == 0
+    shown = capsys.readouterr().out
+    assert "[user] hello" in shown
+    assert "[assistant] hi there" in shown
+    rc = cli_module.run(["session", "delete", session_id, "--config-dir", str(tmp_path)])
+    assert rc == 0
+    assert cli_module.run(["session", "show", session_id, "--config-dir", str(tmp_path)]) == 1
+
+
+def test_run_resume_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    load_or_create_keypair(tmp_path)
+    isolate_data(monkeypatch, tmp_path)
+    runtimes: list[FakeRuntime] = []
+
+    def factory(endpoint: str, model: str, **kw: object) -> FakeRuntime:
+        runtime = FakeRuntime(endpoint, model, **kw)
+        runtimes.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(cli_module, "OllamaRuntime", factory)
+    assert cli_module.run(["run", "--config", str(cfg), "--config-dir", str(tmp_path), "--prompt", "hello"]) == 0
+    capsys.readouterr()
+    sessions_dir = tmp_path / "data" / "jarvis" / "sessions"
+    session_id = next(p.name[: -len(".json.enc")] for p in sessions_dir.glob("*.json.enc"))
+
+    assert (
+        cli_module.run(
+            ["run", "--config", str(cfg), "--config-dir", str(tmp_path), "--session", session_id, "--prompt", "again"]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    resumed = runtimes[1].calls[0]
+    assert resumed[-1].content == "again"
+    assert "hello" in [message.content for message in resumed if message.role == "user"]
+    assert "hi there" in [message.content for message in resumed if message.role == "assistant"]
+
+
+def test_run_resume_missing_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = write_config(tmp_path, '[llm]\nmodel = "qwen2.5:7b"\n')
+    load_or_create_keypair(tmp_path)
+    isolate_data(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "OllamaRuntime", FakeRuntime)
+    rc = cli_module.run(
+        ["run", "--config", str(cfg), "--config-dir", str(tmp_path), "--session", "deadbeef", "--prompt", "hi"]
+    )
+    assert rc == 1
+    assert "session error" in capsys.readouterr().out

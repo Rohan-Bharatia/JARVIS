@@ -152,7 +152,7 @@ def test_agent_calls_tool_then_final_answer(tmp_path: Path) -> None:
     kinds = collect_events(emitter)
     runner = FakeRunner(ToolOutcome(call_id="c1", tool="shell.read", ok=True, summary="contents"))
     runtime = ScriptedRuntime([tool_call_json("shell.read"), "Here is the file contents."])
-    rc = run_agent(
+    rc, _ = run_agent(
         settings=make_settings(tmp_path),
         runtime=runtime,
         runner=runner,
@@ -174,7 +174,7 @@ def test_agent_rejects_unknown_tool(tmp_path: Path) -> None:
     kinds = collect_events(emitter)
     runner = FakeRunner(ToolOutcome(call_id="c1", tool="shell.read", ok=True, summary="x"))
     runtime = ScriptedRuntime([tool_call_json("nope.missing"), "I cannot do that."])
-    rc = run_agent(
+    rc, _ = run_agent(
         settings=make_settings(tmp_path),
         runtime=runtime,
         runner=runner,
@@ -193,7 +193,7 @@ def test_agent_loop_cap(tmp_path: Path) -> None:
     kinds = collect_events(emitter)
     runner = FakeRunner(ToolOutcome(call_id="c1", tool="shell.read", ok=True, summary="x"))
     runtime = ScriptedRuntime([tool_call_json("shell.read")] * 5)
-    rc = run_agent(
+    rc, _ = run_agent(
         settings=make_settings(tmp_path),
         runtime=runtime,
         runner=runner,

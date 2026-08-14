@@ -27,17 +27,26 @@ import getpass
 import json
 import sys
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from JARVIS.agent.loop import run_agent
-from JARVIS.config import ConfigError, config_dir, default_config_path, load_settings, validate_settings
+from JARVIS.config import ConfigError, config_dir, data_dir, default_config_path, load_settings, validate_settings
 from JARVIS.doctor import run_checks
-from JARVIS.events import EventEmitter
+from JARVIS.events import Event, EventEmitter
 from JARVIS.llm.ollama import OllamaError, OllamaRuntime
 from JARVIS.security.keys import check_keypair, load_or_create_keypair, private_key_path
+from JARVIS.session.session import Session, audit_record
+from JARVIS.session.store import SessionStore, SessionStoreError
 from JARVIS.tools.descriptor import DEFAULT_TOOLS_DIR, load_tool_descriptors
 from JARVIS.tools.runner import ToolRunner
 from JARVIS.ui.tui import ProcessViewer
+
+
+def _config_dir_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config-dir", type=Path, default=None, help="path to the JARVIS config directory")
+    return parser
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,8 +73,18 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd = subparsers.add_parser("run", help="stream a response to a single prompt")
     run_cmd.add_argument("--prompt", default=None, help="the user prompt (default: read from stdin)")
     run_cmd.add_argument("--model", default=None, help="override llm.model from the config")
+    run_cmd.add_argument("--session", default=None, help="resume an existing session by id")
     run_cmd.add_argument("--config", type=Path, default=None, help="path to jarvis.toml")
     run_cmd.add_argument("--config-dir", type=Path, default=None, help="path to the JARVIS config directory")
+
+    session_cmd = subparsers.add_parser("session", help="manage encrypted session history")
+    session_sub = session_cmd.add_subparsers(dest="session_action", required=True)
+    session_sub.add_parser("list", parents=[_config_dir_parser()])
+    show = session_sub.add_parser("show", parents=[_config_dir_parser()])
+    show.add_argument("session_id", help="session id")
+    delete = session_sub.add_parser("delete", parents=[_config_dir_parser()])
+    delete.add_argument("session_id", help="session id")
+    session_cmd.add_argument("--config-dir", type=Path, default=None, help="path to the JARVIS config directory")
 
     return parser
 
@@ -79,6 +98,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         return _cmd_keys(args)
     if args.command == "run":
         return _cmd_run(args)
+    if args.command == "session":
+        return _cmd_session(args)
     parser.print_help()
     return 2
 
@@ -136,6 +157,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"keypair missing or invalid at {cfg_dir}; run `jarvis keys` first")
         return 1
     keypair = load_or_create_keypair(cfg_dir)
+    store = SessionStore(data_dir(), keypair)
+    try:
+        session: Session = store.load(args.session) if args.session else store.create(prompt)
+    except SessionStoreError as exc:
+        print(f"session error: {exc}")
+        return 1
 
     runtime = OllamaRuntime(
         settings.llm.endpoint,
@@ -154,6 +181,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         viewer = ProcessViewer()
         emitter.subscribe(viewer.handle)
+        emitter.subscribe(lambda event: _record_audit(session, event))
         viewer.start()
 
         dirs = [DEFAULT_TOOLS_DIR]
@@ -170,14 +198,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
         runner.connect()
 
-        rc = run_agent(
+        rc, turns = run_agent(
             settings=settings,
             runtime=runtime,
             runner=runner,
             emitter=emitter,
             prompt=prompt,
             keypair=keypair,
+            history=session.messages,
         )
+        session.messages = turns
+        session.updated_at = datetime.now(UTC).isoformat()
+        store.save(session)
         return rc
     except OllamaError as exc:
         print(f"error: {exc}")
@@ -188,6 +220,50 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if viewer is not None:
             viewer.stop()
         runtime.close()
+
+
+def _record_audit(session: Session, event: Event) -> None:
+    record = audit_record(event)
+    if record is not None:
+        session.events.append(record)
+
+
+def _cmd_session(args: argparse.Namespace) -> int:
+    cfg_dir = args.config_dir if args.config_dir is not None else config_dir()
+    if check_keypair(cfg_dir):
+        print(f"keypair missing or invalid at {cfg_dir}; run `jarvis keys` first")
+        return 1
+    keypair = load_or_create_keypair(cfg_dir)
+    store = SessionStore(data_dir(), keypair)
+
+    if args.session_action == "list":
+        summaries = store.list()
+        if not summaries:
+            print("no sessions")
+            return 0
+        for summary in summaries:
+            print(f"{summary.id}\t{summary.message_count:>3} msgs\t{summary.updated_at}\t{summary.title}")
+        return 0
+
+    session_id = args.session_id
+    try:
+        session = store.load(session_id)
+    except SessionStoreError as exc:
+        print(f"session error: {exc}")
+        return 1
+
+    if args.session_action == "show":
+        print(f"# {session.title} ({session.id})")
+        for message in session.messages:
+            print(f"[{message.role}] {message.content}")
+        return 0
+
+    if args.session_action == "delete":
+        store.delete(session_id)
+        print(f"deleted session {session_id}")
+        return 0
+
+    return 2
 
 
 def _make_approver(viewer: ProcessViewer) -> Callable[[str, dict[str, object]], bool]:
